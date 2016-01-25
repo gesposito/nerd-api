@@ -15,11 +15,11 @@ tables: ['users', 'groups']
 ```
 
 ## Run Docker Compose (d detach, it interactive)
-`
+```
 docker-compose up -d
 
 docker-compose up -it
-`
+```
 
 ## Get your Docker VM's IP
 `
