@@ -1,0 +1,19 @@
+app-db:
+  image: rethinkdb
+  ports:
+    - "8080:8080"
+    - "28015:28015"
+    - "29015:29015"
+  volumes:
+    - /data:/data
+
+app:
+  image: mhart/alpine-node:0.12
+  ports:
+    - "80:3000"
+  volumes:
+    - ./app:/src
+  working_dir: /src
+  command: npm start
+  links:
+    - app-db:app-db

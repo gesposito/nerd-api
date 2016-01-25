@@ -1,0 +1,185 @@
+#!/usr/bin/env node
+
+/**
+ * Module dependencies.
+ */
+
+var app = require('../app');
+var debug = require('debug')('rethink-db:server');
+var http = require('http');
+
+var r = require('rethinkdb');
+var async = require('async');
+var config = require('../core/db/config');
+
+/**
+ * Get port from environment and store in Express.
+ */
+
+var port = normalizePort(process.env.PORT || '3000');
+app.set('port', port);
+
+/**
+ * Create HTTP server.
+ */
+
+var server = http.createServer(app);
+
+/**
+ * Listen on provided port, on all network interfaces.
+ */
+
+function startExpress() {
+  server.listen(port);
+  server.on('error', onError);
+  server.on('listening', onListening);
+
+}
+
+/*
+ * Connect to rethinkdb, create the needed tables/indexes and then start express.
+ * Create tables/indexes then start express
+ */
+async.waterfall([
+  function connect(callback) {
+    r.connect(config.rethinkdb, callback);
+  },
+  function createDatabase(connection, callback) {
+    //Create the database if needed.
+    r.dbList().contains(config.rethinkdb.db).do(function(containsDb) {
+      return r.branch(
+        containsDb,
+        {created: 0},
+        r.dbCreate(config.rethinkdb.db)
+      );
+    }).run(connection, function(err) {
+      callback(err, connection);
+    });
+  }
+], function(err, connection) {
+  if(err) {
+    console.error(err);
+    process.exit(1);
+    return;
+  }
+
+  createTables();
+});
+
+function mapTables(table, callback) {
+  async.waterfall([
+    function connect(callback) {
+      r.connect(config.rethinkdb, callback);
+    },
+    function createTable(connection, callback) {
+      //Create the table if needed.
+      r.tableList().contains(table).do(function(containsTable) {
+        return r.branch(
+          containsTable,
+          {created: 0},
+          r.tableCreate(table)
+        );
+      }).run(connection, function(err) {
+        callback(err, connection);
+      });
+    },
+    function createIndex(connection, callback) {
+      //Create the index if needed.
+      r.table(table).indexList().contains('createdAt').do(function(hasIndex) {
+        return r.branch(
+          hasIndex,
+          {created: 0},
+          r.table(table).indexCreate('createdAt')
+        );
+      }).run(connection, function(err) {
+        callback(err, connection);
+      });
+    },
+    function waitForIndex(connection, callback) {
+      //Wait for the index to be ready.
+      r.table(table).indexWait('createdAt').run(connection, function(err, result) {
+        callback(err, connection);
+      });
+    }
+  ], function(err, connection) {
+    if (err) {
+      callback(err, null)
+    } else {
+      callback(null, connection)
+    }
+
+  })
+}
+
+function createTables() {
+  async.map(config.rethinkdb.tables, mapTables, function(err, connection) {
+    if(err) {
+      console.error(err);
+      process.exit(1);
+      return;
+    }
+
+    startExpress(connection);
+  })
+}
+
+
+/**
+ * Normalize a port into a number, string, or false.
+ */
+
+function normalizePort(val) {
+  var port = parseInt(val, 10);
+
+  if (isNaN(port)) {
+    // named pipe
+    return val;
+  }
+
+  if (port >= 0) {
+    // port number
+    return port;
+  }
+
+  return false;
+}
+
+/**
+ * Event listener for HTTP server "error" event.
+ */
+
+function onError(error) {
+  if (error.syscall !== 'listen') {
+    throw error;
+  }
+
+  var bind = typeof port === 'string'
+    ? 'Pipe ' + port
+    : 'Port ' + port;
+
+  // handle specific listen errors with friendly messages
+  switch (error.code) {
+    case 'EACCES':
+      console.error(bind + ' requires elevated privileges');
+      process.exit(1);
+      break;
+    case 'EADDRINUSE':
+      console.error(bind + ' is already in use');
+      process.exit(1);
+      break;
+    default:
+      throw error;
+  }
+}
+
+/**
+ * Event listener for HTTP server "listening" event.
+ */
+
+function onListening() {
+  var addr = server.address();
+  var bind = typeof addr === 'string'
+    ? 'pipe ' + addr
+    : 'port ' + addr.port;
+  debug('Listening on ' + bind);
+}
